@@ -5,6 +5,7 @@ vscode-copilot-chat-main/
 config.yaml
 
 custom-copilot-provider/node_modules/
+custom-copilot-provider/out/
 
 *.vsix
 .DS_Store
