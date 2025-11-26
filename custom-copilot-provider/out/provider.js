@@ -81,9 +81,29 @@ const MODEL_DEFINITIONS = {
             reasoningCharLimit: 15_000,
             supportsReasoning: true
         }
+    },
+    glm: {
+        key: 'glm',
+        label: 'Zhipu GLM',
+        secretKey: 'customCopilotProvider.apiKey.glm',
+        defaults: {
+            enabled: true,
+            modelId: 'glm-4.6',
+            apiModelId: 'glm-4.6',
+            displayName: 'Zhipu GLM-4.6',
+            detail: 'Flagship GLM reasoning model',
+            family: 'glm',
+            tooltip: 'GLM-4.6 chat/completions via Zhipu BigModel API.',
+            baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+            maxInputTokens: 128_000,
+            maxOutputTokens: 4_096,
+            temperature: 0.9,
+            reasoningCharLimit: 8_000,
+            supportsReasoning: true
+        }
     }
 };
-const SUPPORTED_VENDORS = ['kimi', 'deepseek'];
+const SUPPORTED_VENDORS = ['kimi', 'deepseek', 'glm'];
 class CustomModelProvider {
     context;
     registeredModels = new Map();
@@ -160,6 +180,9 @@ class CustomModelProvider {
         };
         if (toolsPayload) {
             payload.tools = toolsPayload;
+        }
+        if (backend.vendor === 'glm') {
+            payload.thinking = { type: 'enabled' };
         }
         const flushInterval = this.getReasoningFlushInterval();
         await this.streamOpenAIResponse(backend, apiKey, payload, progress, token, flushInterval);

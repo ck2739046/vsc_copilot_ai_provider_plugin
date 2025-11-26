@@ -190,6 +190,81 @@
             "markdownDescription": "Whether the model streams `reasoning_content` deltas."
           }
         }
+      },
+      {
+        "title": "Custom Copilot Provider — Zhipu GLM",
+        "properties": {
+          "customCopilotProvider.glm.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Expose the model in the Copilot provider list."
+          },
+          "customCopilotProvider.glm.modelId": {
+            "type": "string",
+            "default": "glm-4.6",
+            "markdownDescription": "Identifier shown to VS Code"
+          },
+          "customCopilotProvider.glm.apiModelId": {
+            "type": "string",
+            "default": "glm-4.6",
+            "markdownDescription": "Model name for API. (Important)"
+          },
+          "customCopilotProvider.glm.displayName": {
+            "type": "string",
+            "default": "GLM-4.6",
+            "markdownDescription": "Main model title."
+          },
+          "customCopilotProvider.glm.detail": {
+            "type": "string",
+            "default": "api",
+            "markdownDescription": "Grey text on the right side of model pickers."
+          },
+          "customCopilotProvider.glm.family": {
+            "type": "string",
+            "default": "glm",
+            "markdownDescription": "Family string used for VS Code heuristics."
+          },
+          "customCopilotProvider.glm.tooltip": {
+            "type": "string",
+            "default": "glm-4.6",
+            "markdownDescription": "Tooltip shown in model pickers."
+          },
+          "customCopilotProvider.glm.baseUrl": {
+            "type": "string",
+            "default": "https://open.bigmodel.cn/api/coding/paas/v4",
+            "markdownDescription": "Base URL for API. (Important)"
+          },
+          "customCopilotProvider.glm.maxInputTokens": {
+            "type": "number",
+            "default": 190000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum input tokens."
+          },
+          "customCopilotProvider.glm.maxOutputTokens": {
+            "type": "number",
+            "default": 120000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum output tokens."
+          },
+          "customCopilotProvider.glm.temperature": {
+            "type": "number",
+            "default": 1.0,
+            "minimum": 0,
+            "maximum": 1,
+            "markdownDescription": "Sampling temperature for API calls."
+          },
+          "customCopilotProvider.glm.reasoningCharLimit": {
+            "type": "number",
+            "default": 8000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum characters of reasoning text to stream."
+          },
+          "customCopilotProvider.glm.supportsReasoning": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Whether the model streams `reasoning_content` deltas."
+          }
+        }
       }
     ],
     "languageModelChatProviders": [
