@@ -51,6 +51,8 @@ interface PendingToolCall {
 const SECRET_STORAGE_KEY = 'customCopilotProvider.apiKey';
 const THINKING_STREAM_ID = 'moonshot_reasoning';
 const MAX_EMBEDDED_BASE64 = 120_000;
+const THINKING_FLUSH_INTERVAL_MS = 80;
+const THINKING_CHAR_LIMIT = 15_000;
 
 export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 	constructor(private readonly context: vscode.ExtensionContext) { }
@@ -270,6 +272,94 @@ export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 		token: vscode.CancellationToken
 	): Promise<void> {
 		const endpoint = this.buildEndpoint(baseUrl, 'chat/completions');
+		let previousReasoningSnapshot = '';
+		let pendingReasoning = '';
+		let reasoningFlushTimer: NodeJS.Timeout | undefined;
+		let lastReasoningFlush = Date.now();
+		let reasoningTotalChars = 0;
+		let reasoningTruncated = false;
+		let truncationNoticeSent = false;
+		let thinkingStarted = false;
+		let thinkingCompleted = false;
+
+		const clearReasoningTimer = () => {
+			if (reasoningFlushTimer) {
+				clearTimeout(reasoningFlushTimer);
+				reasoningFlushTimer = undefined;
+			}
+		};
+
+		const flushReasoning = (metadata?: Record<string, unknown>) => {
+			if (pendingReasoning) {
+				this.reportThinkingPart(progress, pendingReasoning, metadata);
+				pendingReasoning = '';
+				lastReasoningFlush = Date.now();
+				return;
+			}
+			if (metadata) {
+				this.reportThinkingPart(progress, '', metadata);
+			}
+		};
+
+		const scheduleReasoningFlush = () => {
+			if (!pendingReasoning) {
+				return;
+			}
+			const elapsed = Date.now() - lastReasoningFlush;
+			if (elapsed >= THINKING_FLUSH_INTERVAL_MS) {
+				flushReasoning();
+				return;
+			}
+			if (reasoningFlushTimer) {
+				return;
+			}
+			const delay = Math.max(THINKING_FLUSH_INTERVAL_MS - elapsed, 0);
+			reasoningFlushTimer = setTimeout(() => {
+				reasoningFlushTimer = undefined;
+				flushReasoning();
+			}, delay);
+		};
+
+		const notifyTruncation = () => {
+			if (truncationNoticeSent) {
+				return;
+			}
+			truncationNoticeSent = true;
+			this.reportThinkingPart(progress, '\n[Reasoning truncated after 15k characters]\n', { vscode_reasoning_truncated: true });
+		};
+
+		const appendReasoningDelta = (delta: string) => {
+			if (!delta) {
+				return;
+			}
+			thinkingStarted = true;
+			if (reasoningTotalChars >= THINKING_CHAR_LIMIT) {
+				reasoningTruncated = true;
+				notifyTruncation();
+				return;
+			}
+			const remaining = THINKING_CHAR_LIMIT - reasoningTotalChars;
+			const usable = delta.slice(0, remaining);
+			if (usable) {
+				pendingReasoning += usable;
+				reasoningTotalChars += usable.length;
+				scheduleReasoningFlush();
+			}
+			if (delta.length > usable.length) {
+				reasoningTruncated = true;
+				notifyTruncation();
+			}
+		};
+
+		const finalizeReasoning = () => {
+			clearReasoningTimer();
+			if (thinkingStarted && !thinkingCompleted) {
+				thinkingCompleted = true;
+				flushReasoning({ vscode_reasoning_done: true });
+			} else {
+				flushReasoning();
+			}
+		};
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
@@ -294,8 +384,6 @@ export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 				}
 
 				let buffer = '';
-				let thinkingStarted = false;
-				let thinkingCompleted = false;
 				const pendingToolCalls = new Map<number, PendingToolCall>();
 
 				response.setEncoding('utf8');
@@ -315,9 +403,7 @@ export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 
 						const payloadString = dataLines.join('\n');
 						if (payloadString === '[DONE]') {
-							if (thinkingStarted && !thinkingCompleted) {
-								this.reportThinkingPart(progress, '', { vscode_reasoning_done: true });
-							}
+							finalizeReasoning();
 							if (!settled) {
 								settled = true;
 								resolve();
@@ -342,16 +428,22 @@ export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 						}
 
 						if (choice.delta.reasoning_content) {
-							thinkingStarted = true;
-							this.reportThinkingPart(progress, choice.delta.reasoning_content);
+							const reasoningChunk = choice.delta.reasoning_content;
+							if (reasoningChunk.startsWith(previousReasoningSnapshot)) {
+								appendReasoningDelta(reasoningChunk.slice(previousReasoningSnapshot.length));
+							} else {
+								previousReasoningSnapshot = '';
+								appendReasoningDelta(reasoningChunk);
+							}
+							previousReasoningSnapshot = reasoningChunk;
 						}
 
 						if (!thinkingCompleted && thinkingStarted && choice.delta.content) {
-							thinkingCompleted = true;
-							this.reportThinkingPart(progress, '', { vscode_reasoning_done: true });
+							finalizeReasoning();
 						}
 
 						if (choice.delta.content) {
+							flushReasoning();
 							progress.report(new vscode.LanguageModelTextPart(choice.delta.content));
 						}
 
@@ -396,16 +488,13 @@ export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 						}
 
 						if (!thinkingCompleted && thinkingStarted && choice.finish_reason && choice.finish_reason !== 'tool_calls') {
-							thinkingCompleted = true;
-							this.reportThinkingPart(progress, '', { vscode_reasoning_done: true });
+							finalizeReasoning();
 						}
 					}
 				});
 
 				response.on('end', () => {
-					if (thinkingStarted && !thinkingCompleted) {
-						this.reportThinkingPart(progress, '', { vscode_reasoning_done: true });
-					}
+						finalizeReasoning();
 					if (!settled) {
 						settled = true;
 						resolve();
@@ -434,7 +523,9 @@ export class CustomModelProvider implements vscode.LanguageModelChatProvider {
 					settled = true;
 					reject(new vscode.CancellationError());
 				}
+				finalizeReasoning();
 				request.destroy();
+				clearReasoningTimer();
 			});
 		});
 	}
