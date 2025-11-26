@@ -1,5 +1,8 @@
 vscode-extension-samples-main/
 huggingface-vscode-chat-main/
+vscode-copilot-chat-main/
+
+custom-copilot-provider/node_modules/
 
 *.vsix
 .DS_Store
