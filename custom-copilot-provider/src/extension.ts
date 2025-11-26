@@ -8,7 +8,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('customCopilotProvider.configureApiKey', async () => {
 			await provider.promptForApiKey();
 		}),
-		vscode.lm.registerLanguageModelChatProvider('custom-byok', provider)
+		vscode.lm.registerLanguageModelChatProvider('custom-copilot-provider', provider)
 	);
 }
 

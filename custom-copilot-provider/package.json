@@ -20,35 +20,182 @@
       {
         "command": "customCopilotProvider.configureApiKey",
         "category": "Custom Copilot Provider",
-        "title": "Set API Key"
+        "title": "Manage API Keys"
       }
     ],
-    "configuration": {
-      "title": "Custom Copilot Provider",
-      "properties": {
-        "customCopilotProvider.defaultModel": {
-          "type": "string",
-          "default": "kimi-k2-thinking",
-          "markdownDescription": "Model identifier to request from the configured vendor (default is `kimi-k2-thinking`)."
-        },
-        "customCopilotProvider.apiBaseUrl": {
-          "type": "string",
-          "default": "https://api.moonshot.cn/v1",
-          "markdownDescription": "Base URL for the chat completions endpoint."
-        },
-        "customCopilotProvider.temperature": {
-          "type": "number",
-          "default": 1,
-          "minimum": 0,
-          "maximum": 2,
-          "markdownDescription": "Sampling temperature forwarded to the vendor API."
+    "configuration": [
+      {
+        "title": "Custom Copilot Provider — General",
+        "properties": {
+          "customCopilotProvider.systemPrompt": {
+            "type": "string",
+            "default": "You are a GitHub Copilot chat provider running inside VS Code. Always preserve code formatting and prefer tool calls when they produce more accurate answers.",
+            "markdownDescription": "Initial system prompt inserted ahead of every chat turn."
+          },
+          "customCopilotProvider.reasoningFlushInterval": {
+            "type": "number",
+            "default": 80,
+            "minimum": 16,
+            "maximum": 500,
+            "markdownDescription": "Milliseconds between reasoning stream flushes to the UI."
+          }
+        }
+      },
+      {
+        "title": "Custom Copilot Provider — Kimi",
+        "properties": {
+          "customCopilotProvider.kimi.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Expose the model in the Copilot provider list."
+          },
+          "customCopilotProvider.kimi.modelId": {
+            "type": "string",
+            "default": "kimi-k2-thinking",
+            "markdownDescription": "Identifier shown to VS Code"
+          },
+          "customCopilotProvider.kimi.apiModelId": {
+            "type": "string",
+            "default": "kimi-k2-thinking",
+            "markdownDescription": "Model name for API. (Important)"
+          },
+          "customCopilotProvider.kimi.displayName": {
+            "type": "string",
+            "default": "Kimi K2 Thinking",
+            "markdownDescription": "Main model title."
+          },
+          "customCopilotProvider.kimi.detail": {
+            "type": "string",
+            "default": "api",
+            "markdownDescription": "Family string used for VS Code heuristics."
+          },
+          "customCopilotProvider.kimi.family": {
+            "type": "string",
+            "default": "kimi",
+            "markdownDescription": "Family string used for VS Code heuristics."
+          },
+          "customCopilotProvider.kimi.tooltip": {
+            "type": "string",
+            "default": "kimi-k2-thinking",
+            "markdownDescription": "Tooltip shown in VS Code model pickers."
+          },
+          "customCopilotProvider.kimi.baseUrl": {
+            "type": "string",
+            "default": "https://api.moonshot.cn/v1",
+            "markdownDescription": "Base URL for API. (Important)"
+          },
+          "customCopilotProvider.kimi.maxInputTokens": {
+            "type": "number",
+            "default": 160000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum input tokens."
+          },
+          "customCopilotProvider.kimi.maxOutputTokens": {
+            "type": "number",
+            "default": 160000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum output tokens."
+          },
+          "customCopilotProvider.kimi.temperature": {
+            "type": "number",
+            "default": 1,
+            "minimum": 0,
+            "maximum": 2,
+            "markdownDescription": "Temperature for API. (Important)"
+          },
+          "customCopilotProvider.kimi.reasoningCharLimit": {
+            "type": "number",
+            "default": 64000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum characters of reasoning text to stream."
+          },
+          "customCopilotProvider.kimi.supportsReasoning": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Whether the model streams `reasoning_content` deltas."
+          }
+        }
+      },
+      {
+        "title": "Custom Copilot Provider — DeepSeek",
+        "properties": {
+          "customCopilotProvider.deepseek.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Expose the model in the Copilot provider list."
+          },
+          "customCopilotProvider.deepseek.modelId": {
+            "type": "string",
+            "default": "deepseek-reasoner",
+            "markdownDescription": "Identifier shown to VS Code"
+          },
+          "customCopilotProvider.deepseek.apiModelId": {
+            "type": "string",
+            "default": "deepseek-reasoner",
+            "markdownDescription": "Model name for API. (Important)"
+          },
+          "customCopilotProvider.deepseek.displayName": {
+            "type": "string",
+            "default": "DeepSeek Reasoner",
+            "markdownDescription": "Main model title."
+          },
+          "customCopilotProvider.deepseek.detail": {
+            "type": "string",
+            "default": "api",
+            "markdownDescription": "Grey text on the right side of model pickers."
+          },
+          "customCopilotProvider.deepseek.family": {
+            "type": "string",
+            "default": "deepseek",
+            "markdownDescription": "Family string used for VS Code heuristics."
+          },
+          "customCopilotProvider.deepseek.tooltip": {
+            "type": "string",
+            "default": "deepseek-reasoner",
+            "markdownDescription": "Tooltip shown in model pickers."
+          },
+          "customCopilotProvider.deepseek.baseUrl": {
+            "type": "string",
+            "default": "https://api.deepseek.com/v1",
+            "markdownDescription": "Base URL for API. (Important)"
+          },
+          "customCopilotProvider.deepseek.maxInputTokens": {
+            "type": "number",
+            "default": 128000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum input tokens."
+          },
+          "customCopilotProvider.deepseek.maxOutputTokens": {
+            "type": "number",
+            "default": 64000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum output tokens."
+          },
+          "customCopilotProvider.deepseek.temperature": {
+            "type": "number",
+            "default": 0.5,
+            "minimum": 0,
+            "maximum": 2,
+            "markdownDescription": "Temperature for API. (Important)"
+          },
+          "customCopilotProvider.deepseek.reasoningCharLimit": {
+            "type": "number",
+            "default": 32000,
+            "minimum": 1000,
+            "markdownDescription": "Maximum characters of reasoning text to stream."
+          },
+          "customCopilotProvider.deepseek.supportsReasoning": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Whether the model streams `reasoning_content` deltas."
+          }
         }
       }
-    },
+    ],
     "languageModelChatProviders": [
       {
-        "vendor": "custom-byok",
-        "displayName": "Custom Provider"
+        "vendor": "custom-copilot-provider",
+        "displayName": "Custom-Provider"
       }
     ]
   },

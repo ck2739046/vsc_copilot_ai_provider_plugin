@@ -41,7 +41,7 @@ async function activate(context) {
     const provider = new provider_1.CustomModelProvider(context);
     context.subscriptions.push(vscode.commands.registerCommand('customCopilotProvider.configureApiKey', async () => {
         await provider.promptForApiKey();
-    }), vscode.lm.registerLanguageModelChatProvider('custom-byok', provider));
+    }), vscode.lm.registerLanguageModelChatProvider('custom-copilot-provider', provider));
 }
 function deactivate() {
     // Nothing to dispose beyond the subscriptions the extension context already tracks.

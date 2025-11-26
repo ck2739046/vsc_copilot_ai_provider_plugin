@@ -37,96 +37,225 @@ exports.CustomModelProvider = void 0;
 const https = __importStar(require("https"));
 const node_url_1 = require("node:url");
 const vscode = __importStar(require("vscode"));
-const SECRET_STORAGE_KEY = 'customCopilotProvider.apiKey';
-const THINKING_STREAM_ID = 'moonshot_reasoning';
+const DEFAULT_SYSTEM_PROMPT = 'You are a GitHub Copilot chat provider running inside VS Code. Always preserve code formatting and prefer tool calls when they produce more accurate answers.';
+const DEFAULT_REASONING_FLUSH_INTERVAL = 80;
 const MAX_EMBEDDED_BASE64 = 120_000;
-const THINKING_FLUSH_INTERVAL_MS = 80;
-const THINKING_CHAR_LIMIT = 15_000;
+const REASONING_STREAM_ID = 'custom_reasoning';
+const MODEL_DEFINITIONS = {
+    kimi: {
+        key: 'kimi',
+        label: 'Moonshot / Kimi',
+        secretKey: 'customCopilotProvider.apiKey.kimi',
+        defaults: {
+            enabled: true,
+            modelId: 'kimi-k2-thinking',
+            apiModelId: 'kimi-k2-thinking',
+            displayName: 'Moonshot Thinking Model',
+            detail: 'Powered by kimi-k2-thinking',
+            family: 'moonshot',
+            tooltip: 'Streams reasoning traces and supports tool calls via Moonshot.',
+            baseUrl: 'https://api.moonshot.cn/v1',
+            maxInputTokens: 200_000,
+            maxOutputTokens: 16_000,
+            temperature: 1,
+            reasoningCharLimit: 15_000,
+            supportsReasoning: true
+        }
+    },
+    deepseek: {
+        key: 'deepseek',
+        label: 'DeepSeek',
+        secretKey: 'customCopilotProvider.apiKey.deepseek',
+        defaults: {
+            enabled: true,
+            modelId: 'deepseek-reasoner',
+            apiModelId: 'deepseek-reasoner',
+            displayName: 'DeepSeek Reasoner',
+            detail: 'DeepSeek-V3.2-Exp (thinking mode)',
+            family: 'deepseek',
+            tooltip: 'Reasoning-first DeepSeek API with tool calling support.',
+            baseUrl: 'https://api.deepseek.com/v1',
+            maxInputTokens: 200_000,
+            maxOutputTokens: 32_000,
+            temperature: 0.7,
+            reasoningCharLimit: 15_000,
+            supportsReasoning: true
+        }
+    }
+};
+const SUPPORTED_VENDORS = ['kimi', 'deepseek'];
 class CustomModelProvider {
     context;
+    registeredModels = new Map();
     constructor(context) {
         this.context = context;
     }
-    async promptForApiKey() {
-        const value = await vscode.window.showInputBox({
-            title: 'Enter Moonshot (Kimi) API Key',
-            prompt: 'The key is stored securely in the VS Code secret storage for this profile.',
-            password: true,
-            ignoreFocusOut: true,
-        });
-        if (!value) {
+    async promptForApiKey(target) {
+        const vendor = target ?? await this.pickVendor('Select a provider to configure its API key');
+        if (!vendor) {
             return;
         }
-        await this.context.secrets.store(SECRET_STORAGE_KEY, value.trim());
-        void vscode.window.showInformationMessage('Custom Copilot Provider API key saved.');
-    }
-    async provideLanguageModelChatInformation(options) {
-        const apiKey = await this.ensureApiKey(!options.silent);
-        if (!apiKey) {
-            return [];
+        const definition = MODEL_DEFINITIONS[vendor];
+        const settings = this.readModelSettings(vendor);
+        const existing = await this.context.secrets.get(definition.secretKey);
+        const value = await vscode.window.showInputBox({
+            title: `Enter ${settings.displayName} API Key`,
+            prompt: 'Keys are stored securely in VS Code Secret Storage for this profile.',
+            password: true,
+            ignoreFocusOut: true,
+            value: existing ?? ''
+        });
+        if (value === undefined) {
+            return;
         }
-        const config = vscode.workspace.getConfiguration('customCopilotProvider');
-        const modelId = config.get('defaultModel', 'kimi-k2-thinking');
-        return [
-            {
-                id: modelId,
-                name: 'Moonshot Thinking Model',
-                family: 'moonshot',
-                tooltip: 'Streams reasoning traces and supports multi-step tool calls via the Moonshot API.',
-                detail: 'Powered by kimi-k2-thinking',
-                version: '2025-11-26',
-                maxInputTokens: 200000,
-                maxOutputTokens: 16000,
-                capabilities: {
-                    toolCalling: true,
-                    imageInput: false
-                }
+        const trimmed = value.trim();
+        if (!trimmed) {
+            await this.context.secrets.delete(definition.secretKey);
+            void vscode.window.showInformationMessage(`${settings.displayName} API key cleared.`);
+            return;
+        }
+        await this.context.secrets.store(definition.secretKey, trimmed);
+        void vscode.window.showInformationMessage(`${settings.displayName} API key saved.`);
+    }
+    async provideLanguageModelChatInformation(_options) {
+        const infos = [];
+        this.registeredModels.clear();
+        for (const vendor of SUPPORTED_VENDORS) {
+            const settings = this.readModelSettings(vendor);
+            if (!settings.enabled) {
+                continue;
             }
-        ];
+            const info = this.toChatInformation(settings);
+            this.registeredModels.set(info.id, { vendor, settings });
+            infos.push(info);
+        }
+        return infos;
     }
     async provideLanguageModelChatResponse(model, messages, options, progress, token) {
-        const apiKey = await this.ensureApiKey(true);
+        const backend = this.resolveModel(model.id);
+        if (!backend) {
+            throw new Error(`Model ${model.id} is not managed by the Custom Copilot Provider.`);
+        }
+        const apiKey = await this.ensureApiKey(backend.vendor, true);
         if (!apiKey) {
-            throw new Error('No API key configured for the Custom Copilot Provider. Run the "Set API Key" command first.');
+            throw new Error(`No API key configured for ${backend.settings.displayName}. Run "Manage API Keys" first.`);
         }
         if (options.toolMode === vscode.LanguageModelChatToolMode.Required) {
-            throw new Error('The configured vendor API does not support forcing a tool call on every response.');
+            throw new Error(`${backend.settings.displayName} does not support forcing a tool call on every response.`);
         }
-        const config = vscode.workspace.getConfiguration('customCopilotProvider');
-        const baseUrl = config.get('apiBaseUrl', 'https://api.moonshot.cn/v1');
-        const temperature = config.get('temperature', 1);
+        const messagesPayload = this.convertMessages(messages);
+        const toolsPayload = this.convertTools(options.tools);
+        const temperatureOverride = options.modelOptions?.temperature;
+        const maxTokensOverride = options.modelOptions;
+        const requestedMaxTokens = maxTokensOverride?.maxTokens ?? maxTokensOverride?.max_tokens;
+        const maxTokens = typeof requestedMaxTokens === 'number'
+            ? Math.min(Math.max(requestedMaxTokens, 1), backend.settings.maxOutputTokens)
+            : backend.settings.maxOutputTokens;
         const payload = {
-            model: model.id,
-            messages: this.convertMessages(messages),
+            model: backend.settings.apiModelId,
+            messages: messagesPayload,
             stream: true,
-            temperature,
-            max_tokens: model.maxOutputTokens,
-            tools: this.convertTools(options.tools),
+            temperature: typeof temperatureOverride === 'number' ? temperatureOverride : backend.settings.temperature,
+            max_tokens: maxTokens
         };
-        await this.streamMoonshotResponse(baseUrl, apiKey, payload, progress, token);
+        if (toolsPayload) {
+            payload.tools = toolsPayload;
+        }
+        const flushInterval = this.getReasoningFlushInterval();
+        await this.streamOpenAIResponse(backend, apiKey, payload, progress, token, flushInterval);
     }
     async provideTokenCount(_model, text) {
         const content = typeof text === 'string' ? text : this.flattenMessage(text);
         return Math.ceil(content.length / 4);
     }
-    async ensureApiKey(allowPrompt) {
-        const existing = await this.context.secrets.get(SECRET_STORAGE_KEY);
+    async pickVendor(placeHolder) {
+        const choices = SUPPORTED_VENDORS.map(vendor => {
+            const settings = this.readModelSettings(vendor);
+            return {
+                label: settings.displayName,
+                description: settings.detail,
+                vendor
+            };
+        });
+        const selection = await vscode.window.showQuickPick(choices, { placeHolder });
+        return selection?.vendor;
+    }
+    readModelSettings(vendor) {
+        const definition = MODEL_DEFINITIONS[vendor];
+        const config = vscode.workspace.getConfiguration('customCopilotProvider');
+        const get = (suffix, fallback) => config.get(`${vendor}.${suffix}`, fallback);
+        return {
+            enabled: get('enabled', definition.defaults.enabled),
+            modelId: get('modelId', definition.defaults.modelId),
+            apiModelId: get('apiModelId', definition.defaults.apiModelId),
+            displayName: get('displayName', definition.defaults.displayName),
+            detail: get('detail', definition.defaults.detail),
+            family: get('family', definition.defaults.family),
+            tooltip: get('tooltip', definition.defaults.tooltip),
+            baseUrl: get('baseUrl', definition.defaults.baseUrl),
+            maxInputTokens: get('maxInputTokens', definition.defaults.maxInputTokens),
+            maxOutputTokens: get('maxOutputTokens', definition.defaults.maxOutputTokens),
+            temperature: get('temperature', definition.defaults.temperature),
+            reasoningCharLimit: get('reasoningCharLimit', definition.defaults.reasoningCharLimit),
+            supportsReasoning: get('supportsReasoning', definition.defaults.supportsReasoning)
+        };
+    }
+    toChatInformation(settings) {
+        return {
+            id: settings.modelId,
+            name: settings.displayName,
+            detail: settings.detail,
+            family: settings.family,
+            tooltip: settings.tooltip,
+            version: '2025-11-26',
+            maxInputTokens: settings.maxInputTokens,
+            maxOutputTokens: settings.maxOutputTokens,
+            capabilities: {
+                toolCalling: true,
+                imageInput: false
+            }
+        };
+    }
+    resolveModel(modelId) {
+        const cached = this.registeredModels.get(modelId);
+        if (cached) {
+            return cached;
+        }
+        for (const vendor of SUPPORTED_VENDORS) {
+            const settings = this.readModelSettings(vendor);
+            if (settings.enabled && settings.modelId === modelId) {
+                const registered = { vendor, settings };
+                this.registeredModels.set(modelId, registered);
+                return registered;
+            }
+        }
+        return undefined;
+    }
+    async ensureApiKey(vendor, allowPrompt) {
+        const definition = MODEL_DEFINITIONS[vendor];
+        const existing = await this.context.secrets.get(definition.secretKey);
         if (existing) {
             return existing;
         }
         if (!allowPrompt) {
             return undefined;
         }
-        await this.promptForApiKey();
-        return this.context.secrets.get(SECRET_STORAGE_KEY);
+        await this.promptForApiKey(vendor);
+        return this.context.secrets.get(definition.secretKey);
+    }
+    getSystemPrompt() {
+        return vscode.workspace
+            .getConfiguration('customCopilotProvider')
+            .get('systemPrompt', DEFAULT_SYSTEM_PROMPT);
+    }
+    getReasoningFlushInterval() {
+        return vscode.workspace
+            .getConfiguration('customCopilotProvider')
+            .get('reasoningFlushInterval', DEFAULT_REASONING_FLUSH_INTERVAL);
     }
     convertMessages(messages) {
-        const chat = [
-            {
-                role: 'system',
-                content: 'You are a GitHub Copilot chat provider running inside VS Code. Always preserve code formatting and prefer tool calls when they produce more accurate answers.'
-            }
-        ];
+        const systemPrompt = this.getSystemPrompt().trim();
+        const chat = systemPrompt ? [{ role: 'system', content: systemPrompt }] : [];
         for (const message of messages) {
             if (message.role === vscode.LanguageModelChatMessageRole.Assistant) {
                 const textPieces = [];
@@ -229,70 +358,89 @@ class CustomModelProvider {
         const truncated = base64.slice(0, MAX_EMBEDDED_BASE64);
         return `data:${part.mimeType};base64,${truncated}... (truncated, original ${part.data.byteLength} bytes)`;
     }
-    async streamMoonshotResponse(baseUrl, apiKey, payload, progress, token) {
-        const endpoint = this.buildEndpoint(baseUrl, 'chat/completions');
+    async streamOpenAIResponse(backend, apiKey, payload, progress, token, flushIntervalMs) {
+        const endpoint = this.buildEndpoint(backend.settings.baseUrl, 'chat/completions');
+        const reasoningLimit = Math.max(0, backend.settings.reasoningCharLimit);
+        const enableReasoning = backend.settings.supportsReasoning && reasoningLimit > 0;
+        const reasoningSessionId = `${backend.settings.modelId}-${Date.now()}`;
         let previousReasoningSnapshot = '';
         let pendingReasoning = '';
         let reasoningFlushTimer;
         let lastReasoningFlush = Date.now();
         let reasoningTotalChars = 0;
-        let reasoningTruncated = false;
         let truncationNoticeSent = false;
         let thinkingStarted = false;
         let thinkingCompleted = false;
+        let reasoningAnnounced = false;
         const clearReasoningTimer = () => {
             if (reasoningFlushTimer) {
                 clearTimeout(reasoningFlushTimer);
                 reasoningFlushTimer = undefined;
             }
         };
+        const announceReasoning = () => {
+            if (!enableReasoning || reasoningAnnounced) {
+                return;
+            }
+            reasoningAnnounced = true;
+            this.reportThinkingPart(progress, '', {
+                vscode_reasoning: true,
+                vscode_reasoning_id: reasoningSessionId,
+                model: backend.settings.displayName
+            });
+        };
         const flushReasoning = (metadata) => {
+            if (!enableReasoning) {
+                return;
+            }
             if (pendingReasoning) {
+                announceReasoning();
                 this.reportThinkingPart(progress, pendingReasoning, metadata);
                 pendingReasoning = '';
                 lastReasoningFlush = Date.now();
                 return;
             }
             if (metadata) {
+                announceReasoning();
                 this.reportThinkingPart(progress, '', metadata);
             }
         };
         const scheduleReasoningFlush = () => {
-            if (!pendingReasoning) {
+            if (!enableReasoning || !pendingReasoning) {
                 return;
             }
             const elapsed = Date.now() - lastReasoningFlush;
-            if (elapsed >= THINKING_FLUSH_INTERVAL_MS) {
+            if (elapsed >= flushIntervalMs) {
                 flushReasoning();
                 return;
             }
             if (reasoningFlushTimer) {
                 return;
             }
-            const delay = Math.max(THINKING_FLUSH_INTERVAL_MS - elapsed, 0);
+            const delay = Math.max(flushIntervalMs - elapsed, 0);
             reasoningFlushTimer = setTimeout(() => {
                 reasoningFlushTimer = undefined;
                 flushReasoning();
             }, delay);
         };
         const notifyTruncation = () => {
-            if (truncationNoticeSent) {
+            if (!enableReasoning || truncationNoticeSent) {
                 return;
             }
             truncationNoticeSent = true;
-            this.reportThinkingPart(progress, '\n[Reasoning truncated after 15k characters]\n', { vscode_reasoning_truncated: true });
+            announceReasoning();
+            this.reportThinkingPart(progress, `\n[Reasoning truncated after ${reasoningLimit.toLocaleString()} characters]\n`, { vscode_reasoning_truncated: true });
         };
         const appendReasoningDelta = (delta) => {
-            if (!delta) {
+            if (!enableReasoning || !delta) {
                 return;
             }
             thinkingStarted = true;
-            if (reasoningTotalChars >= THINKING_CHAR_LIMIT) {
-                reasoningTruncated = true;
+            if (reasoningTotalChars >= reasoningLimit) {
                 notifyTruncation();
                 return;
             }
-            const remaining = THINKING_CHAR_LIMIT - reasoningTotalChars;
+            const remaining = reasoningLimit - reasoningTotalChars;
             const usable = delta.slice(0, remaining);
             if (usable) {
                 pendingReasoning += usable;
@@ -300,11 +448,13 @@ class CustomModelProvider {
                 scheduleReasoningFlush();
             }
             if (delta.length > usable.length) {
-                reasoningTruncated = true;
                 notifyTruncation();
             }
         };
         const finalizeReasoning = () => {
+            if (!enableReasoning) {
+                return;
+            }
             clearReasoningTimer();
             if (thinkingStarted && !thinkingCompleted) {
                 thinkingCompleted = true;
@@ -330,7 +480,7 @@ class CustomModelProvider {
                     response.on('end', () => {
                         if (!settled) {
                             settled = true;
-                            reject(new Error(`Moonshot API responded with status ${response.statusCode}: ${Buffer.concat(chunks).toString('utf8')}`));
+                            reject(new Error(`${backend.settings.displayName} API responded with status ${response.statusCode}: ${Buffer.concat(chunks).toString('utf8')}`));
                         }
                     });
                     return;
@@ -473,7 +623,7 @@ class CustomModelProvider {
         const extended = vscode;
         const ThinkingCtor = extended.LanguageModelThinkingPart;
         if (ThinkingCtor) {
-            progress.report(new ThinkingCtor(chunk, THINKING_STREAM_ID, metadata));
+            progress.report(new ThinkingCtor(chunk, REASONING_STREAM_ID, metadata));
             return;
         }
         if (chunk) {
