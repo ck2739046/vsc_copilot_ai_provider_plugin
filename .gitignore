@@ -1,1 +1,7 @@
 vscode-extension-samples-main/
+huggingface-vscode-chat-main/
+
+*.vsix
+.DS_Store
+.vscode-test/
+.vscode/
